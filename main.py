@@ -212,16 +212,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 # ==========================================
-# 🛡️ VERIFICATION DM (STEP 1) - FIXED (DEEP LINKING)
+# 🛡️ VERIFICATION DM (STEP 1) - FIXED (SUPER FAST)
 # ==========================================
 async def auto_accept_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles new chat join requests and sends Verification DM using Deep Links."""
+    """Handles new chat join requests and sends Verification DM instantly."""
     request = update.chat_join_request
     chat = request.chat
     user = request.from_user
-    
-    await save_user(user)
-    await save_chat(chat)
     
     safe_name = html.escape(user.first_name)
     bot_username = context.bot.username
@@ -240,25 +237,34 @@ async def auto_accept_requests(update: Update, context: ContextTypes.DEFAULT_TYP
         [get_color_btn("🤖 I am not a robot (Verify)", url=verify_url, style="success")]
     ])
     
-    max_retries = 2
-    for attempt in range(max_retries + 1):
-        try:
-            await context.bot.send_message(
-                chat_id=user.id, 
-                text=text, 
-                reply_markup=keyboard, 
-                parse_mode=ParseMode.HTML
-            )
-            logger.info(f"Verification DM sent successfully to {user.id}")
-            break
-            
-        except telegram.error.RetryAfter as e:
-            await asyncio.sleep(e.retry_after)
-        except Exception as e:
-            if attempt < max_retries:
-                await asyncio.sleep(2)
-            else:
-                logger.error(f"Failed to DM {user.id}: {e}")
+    # 🚀 FAST EXECUTION LOGIC: मैसेज भेजने का टास्क सबसे पहले रन होगा
+    async def send_dm_instantly():
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                await context.bot.send_message(
+                    chat_id=user.id, 
+                    text=text, 
+                    reply_markup=keyboard, 
+                    parse_mode=ParseMode.HTML
+                )
+                logger.info(f"Verification DM sent successfully to {user.id}")
+                break
+                
+            except telegram.error.RetryAfter as e:
+                await asyncio.sleep(e.retry_after)
+            except Exception as e:
+                if attempt < max_retries:
+                    await asyncio.sleep(2)
+                else:
+                    logger.error(f"Failed to DM {user.id}: {e}")
+
+    # 1. तुरंत DM भेजो (बिना रुके)
+    asyncio.create_task(send_dm_instantly())
+    
+    # 2. बैकग्राउंड में डेटाबेस सेव करो (इससे DM भेजने में देरी नहीं होगी)
+    asyncio.create_task(save_user(user))
+    asyncio.create_task(save_chat(chat))
 
 # ==========================================
 # ⚙️ ADVANCED ADMIN PANEL DASHBOARD
