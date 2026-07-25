@@ -53,8 +53,9 @@ users_col = db["users"]
 chats_col = db["chats"]
 settings_col = db["settings"] # New Collection for Admin Settings
 
-# DM Setup State Manager (Memory)
+# State Managers (Memory) for DM Setup & Broadcasts
 setup_state: Dict[int, Dict[str, Any]] = {}
+bcast_state: Dict[int, Dict[str, Any]] = {}
 
 # ==========================================
 # 🗃️ DATABASE HELPER FUNCTIONS
@@ -215,13 +216,15 @@ async def admin_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     keyboard = InlineKeyboardMarkup([
         [get_color_btn("📊 View Bot Live Stats", callback_data="admin_stats", style="primary")],
-        [get_color_btn("⚙️ Set Post-Verify DM", callback_data="setup_dm", style="success")],
-        [get_color_btn("🗑️ Clear Custom DM", callback_data="clear_dm", style="danger")]
+        [get_color_btn("⚙️ Set Post-Verify DM", callback_data="setup_dm", style="success"),
+         get_color_btn("🗑️ Clear Custom DM", callback_data="clear_dm", style="danger")],
+        [get_color_btn("📢 Broadcast to Users (DM)", callback_data="bcast_users", style="success")],
+        [get_color_btn("📢 Broadcast to Groups/Channels", callback_data="bcast_chats", style="danger")]
     ])
     
     text = (
         f"<blockquote>⚙️ <b>ADVANCED ADMIN PANEL</b></blockquote>\n\n"
-        f"Welcome to the Admin Dashboard. Manage statistics and configure the Custom DM sent to users after verification."
+        f"Welcome to the Admin Dashboard. Manage statistics, configure the Custom DM, and use Broadcast features."
     )
     await update.message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
@@ -280,7 +283,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-    # 1. Verification Callback -> Sends Custom DM (Does NOT Accept Request)
+    # 1. Verification Callback -> Sends Custom DM (Does NOT Accept Request - Maintained from 412)
     if data.startswith("verify_"):
         await save_user(user)
         
@@ -290,7 +293,6 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
             
-        # Fetch custom DM from database
         custom_dm = await settings_col.find_one({"_id": "custom_dm"})
         
         if custom_dm:
@@ -313,12 +315,13 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_audio(chat_id=uid, audio=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
                 elif state.get("media_type") == "animation":
                     await context.bot.send_animation(chat_id=uid, animation=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+                elif state.get("media_type") == "voice":
+                    await context.bot.send_voice(chat_id=uid, voice=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
                 else:
                     await context.bot.send_message(chat_id=uid, text=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
             except Exception as e:
                 logger.error(f"Error sending custom DM to {uid}: {e}")
         else:
-            # Fallback if Admin hasn't set anything
             await context.bot.send_message(
                 chat_id=uid,
                 text="✅ <b>Verification Successful!</b>\n\nYour identity has been verified. Please wait for admins to review your request.",
@@ -350,12 +353,14 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "back_to_admin" and uid == ADMIN_ID:
         keyboard = InlineKeyboardMarkup([
             [get_color_btn("📊 View Bot Live Stats", callback_data="admin_stats", style="primary")],
-            [get_color_btn("⚙️ Set Post-Verify DM", callback_data="setup_dm", style="success")],
-            [get_color_btn("🗑️ Clear Custom DM", callback_data="clear_dm", style="danger")]
+            [get_color_btn("⚙️ Set Post-Verify DM", callback_data="setup_dm", style="success"),
+             get_color_btn("🗑️ Clear Custom DM", callback_data="clear_dm", style="danger")],
+            [get_color_btn("📢 Broadcast to Users (DM)", callback_data="bcast_users", style="success")],
+            [get_color_btn("📢 Broadcast to Groups/Channels", callback_data="bcast_chats", style="danger")]
         ])
         text = (
             f"<blockquote>⚙️ <b>ADVANCED ADMIN PANEL</b></blockquote>\n\n"
-            f"Welcome to the Admin Dashboard. Manage statistics and configure the Custom DM sent to users after verification."
+            f"Welcome to the Admin Dashboard. Manage statistics, configure the Custom DM, and use Broadcast features."
         )
         await query.message.edit_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
         return
@@ -389,16 +394,49 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(text, parse_mode=ParseMode.HTML)
         return
 
-    # 6. DM Button Color Selection
+    # 6. Initiate Broadcast Flow (Users or Chats)
+    if data in ["bcast_users", "bcast_chats"] and uid == ADMIN_ID:
+        btype = "users" if data == "bcast_users" else "chats"
+        bcast_state[uid] = {
+            "type": btype,
+            "step": "media",
+            "media_type": None,
+            "media_id": None,
+            "text": None,
+            "target_button_count": 0,
+            "current_button_index": 0,
+            "buttons": [],
+            "temp_name": "",
+            "temp_url": ""
+        }
+        target_name = "Verified Users (DM)" if btype == "users" else "Groups & Channels"
+        text = (
+            f"<blockquote>📢 <b>BROADCAST WIZARD</b></blockquote>\n\n"
+            f"<b>Target:</b> {target_name}\n\n"
+            f"<b>Step 1:</b> Send <b>Media (Photo/Video/Audio/Doc)</b> for the broadcast.\n\n"
+            f"<i>(Type /skip if you only want to send a text message)</i>"
+        )
+        await query.message.edit_text(text, parse_mode=ParseMode.HTML)
+        return
+
+    # 7. Button Color Selection (Unified for Custom DM and Broadcast)
     if data.startswith("setcol_") and uid == ADMIN_ID:
-        if uid not in setup_state or setup_state[uid]["step"] != "btn_color":
+        color_choice = data.split("_")[1]
+        
+        state = None
+        wizard_type = None
+        
+        if uid in setup_state and setup_state[uid]["step"] == "btn_color":
+            state = setup_state[uid]
+            wizard_type = "setup"
+        elif uid in bcast_state and bcast_state[uid]["step"] == "btn_color":
+            state = bcast_state[uid]
+            wizard_type = "bcast"
+        else:
             try: await query.answer("Session expired or invalid step.", show_alert=True)
             except: pass
             return
             
-        color_choice = data.split("_")[1]
-        state = setup_state[uid]
-        
         state["buttons"].append({
             "name": state["temp_name"],
             "url": state["temp_url"],
@@ -419,33 +457,54 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             state["step"] = "confirm"
-            await context.bot.send_message(
-                uid, 
-                "✅ <b>All Buttons Configured Successfully!</b>\n\nAll set! Type <b>/confirm</b> to save this Custom DM or <b>/cancel</b> to abort.", 
-                parse_mode=ParseMode.HTML
-            )
+            if wizard_type == "setup":
+                await context.bot.send_message(
+                    uid, 
+                    "✅ <b>All Buttons Configured Successfully!</b>\n\nAll set! Type <b>/confirm</b> to save this Custom DM or <b>/cancel</b> to abort.", 
+                    parse_mode=ParseMode.HTML
+                )
+            else:
+                await context.bot.send_message(
+                    uid, 
+                    "✅ <b>All Buttons Configured Successfully!</b>\n\nAll set! Type <b>/confirm</b> to start the broadcast or <b>/cancel</b> to abort.", 
+                    parse_mode=ParseMode.HTML
+                )
         return
 
 # ==========================================
-# 📢 DM WIZARD PROCESSORS
+# 📢 UNIFIED WIZARD PROCESSORS (Setup DM & Broadcast)
 # ==========================================
-async def cancel_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancels the ongoing DM setup."""
+async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancels the ongoing setup or broadcast."""
     uid = update.effective_user.id
     if uid == ADMIN_ID:
         if uid in setup_state:
             del setup_state[uid]
-            await update.message.reply_text("❌ <b>Setup Process Cancelled Successfully.</b>", parse_mode=ParseMode.HTML)
+            await update.message.reply_text("❌ <b>Custom DM Setup Cancelled Successfully.</b>", parse_mode=ParseMode.HTML)
+        elif uid in bcast_state:
+            del bcast_state[uid]
+            await update.message.reply_text("❌ <b>Broadcast Process Cancelled Successfully.</b>", parse_mode=ParseMode.HTML)
         else:
             await update.message.reply_text("You don't have any active setup running.")
 
-async def process_setup_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles the sequential steps of Custom DM setup."""
+async def process_wizard_steps(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles sequential steps for both Custom DM Setup and Broadcast Wizards."""
     uid = update.effective_user.id
-    if uid != ADMIN_ID or uid not in setup_state:
+    if uid != ADMIN_ID:
         return
         
-    state = setup_state[uid]
+    state = None
+    wizard_type = None
+    
+    if uid in setup_state:
+        state = setup_state[uid]
+        wizard_type = "setup"
+    elif uid in bcast_state:
+        state = bcast_state[uid]
+        wizard_type = "bcast"
+    else:
+        return
+        
     step = state["step"]
     message = update.message
     
@@ -455,17 +514,17 @@ async def process_setup_steps(update: Update, context: ContextTypes.DEFAULT_TYPE
     if step == "media":
         if is_skip_cmd:
             state["step"] = "text"
-            await message.reply_text("⏭ <b>Media Skipped.</b>\n\n<b>Step 2:</b> Now send the <b>Text Message</b> (Emojis supported).\n<i>(Type /skip to skip text)</i>", parse_mode=ParseMode.HTML)
+            await message.reply_text("⏭ <b>Media Skipped.</b>\n\n<b>Step 2:</b> Now send the <b>Text Message</b>.\n<i>(Type /skip to skip text)</i>", parse_mode=ParseMode.HTML)
         elif message.photo:
             state["media_type"] = "photo"
             state["media_id"] = message.photo[-1].file_id
             state["step"] = "text"
-            await message.reply_text("✅ <b>Photo Saved.</b>\n\n<b>Step 2:</b> Now send the <b>Text Message</b> (Emojis supported).\n<i>(Type /skip to skip text)</i>", parse_mode=ParseMode.HTML)
+            await message.reply_text("✅ <b>Photo Saved.</b>\n\n<b>Step 2:</b> Now send the <b>Text Message</b>.\n<i>(Type /skip to skip text)</i>", parse_mode=ParseMode.HTML)
         elif message.video:
             state["media_type"] = "video"
             state["media_id"] = message.video.file_id
             state["step"] = "text"
-            await message.reply_text("✅ <b>Video Saved.</b>\n\n<b>Step 2:</b> Now send the <b>Text Message</b> (Emojis supported).\n<i>(Type /skip to skip text)</i>", parse_mode=ParseMode.HTML)
+            await message.reply_text("✅ <b>Video Saved.</b>\n\n<b>Step 2:</b> Now send the <b>Text Message</b>.\n<i>(Type /skip to skip text)</i>", parse_mode=ParseMode.HTML)
         elif message.document:
             state["media_type"] = "document"
             state["media_id"] = message.document.file_id
@@ -481,8 +540,13 @@ async def process_setup_steps(update: Update, context: ContextTypes.DEFAULT_TYPE
             state["media_id"] = message.animation.file_id
             state["step"] = "text"
             await message.reply_text("✅ <b>GIF/Animation Saved.</b>\n\n<b>Step 2:</b> Now send the <b>Text Message</b>.\n<i>(Type /skip to skip text)</i>", parse_mode=ParseMode.HTML)
+        elif message.voice:
+            state["media_type"] = "voice"
+            state["media_id"] = message.voice.file_id
+            state["step"] = "text"
+            await message.reply_text("✅ <b>Voice Note Saved.</b>\n\n<b>Step 2:</b> Now send the <b>Text Message</b>.\n<i>(Type /skip to skip text)</i>", parse_mode=ParseMode.HTML)
         else:
-            await message.reply_text("⚠️ Please send a Media File (Photo/Video/Doc/Audio/GIF) or type /skip.")
+            await message.reply_text("⚠️ Please send a Media File (Photo/Video/Doc/Audio/GIF/Voice) or type /skip.")
             
     elif step == "text":
         if is_skip_cmd:
@@ -506,7 +570,10 @@ async def process_setup_steps(update: Update, context: ContextTypes.DEFAULT_TYPE
             
         if count == 0:
             state["step"] = "confirm"
-            await message.reply_text("✅ <b>No buttons selected.</b>\n\nAll set! Type <b>/confirm</b> to save this Custom DM or <b>/cancel</b> to abort.", parse_mode=ParseMode.HTML)
+            if wizard_type == "setup":
+                await message.reply_text("✅ <b>No buttons selected.</b>\n\nAll set! Type <b>/confirm</b> to save this Custom DM or <b>/cancel</b> to abort.", parse_mode=ParseMode.HTML)
+            else:
+                await message.reply_text("✅ <b>No buttons selected.</b>\n\nAll set! Type <b>/confirm</b> to start the broadcast or <b>/cancel</b> to abort.", parse_mode=ParseMode.HTML)
         else:
             state["target_button_count"] = count
             state["current_button_index"] = 0
@@ -534,25 +601,114 @@ async def process_setup_steps(update: Update, context: ContextTypes.DEFAULT_TYPE
         ])
         await message.reply_text("🎨 <b>Select Button Color:</b>\n\nChoose a color for this button from the menu below:", reply_markup=kb, parse_mode=ParseMode.HTML)
 
-async def confirm_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Confirm and Save the Custom DM Settings."""
+async def confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Confirms and Saves Custom DM OR Starts Broadcast."""
     uid = update.effective_user.id
     if uid == ADMIN_ID:
-        if uid not in setup_state or setup_state[uid]["step"] != "confirm":
-            await update.message.reply_text("⚠️ No setup is waiting for confirmation.")
-            return
+        if uid in setup_state and setup_state[uid]["step"] == "confirm":
+            state = setup_state[uid]
+            # Save to Database for Custom DM
+            await settings_col.update_one(
+                {"_id": "custom_dm"},
+                {"$set": {"data": state}},
+                upsert=True
+            )
+            del setup_state[uid]
+            await update.message.reply_text("🚀 <b>Custom Verification DM Saved Successfully!</b>\n\nAnyone who verifies now will receive this exact message and buttons.", parse_mode=ParseMode.HTML)
             
-        state = setup_state[uid]
+        elif uid in bcast_state and bcast_state[uid]["step"] == "confirm":
+            state = bcast_state[uid]
+            await update.message.reply_text("🚀 <b>Broadcast Starting... Please wait. I will notify you when it finishes.</b>", parse_mode=ParseMode.HTML)
+            
+            # Run broadcast in background
+            asyncio.create_task(execute_broadcast(context, uid, state))
+            del bcast_state[uid]
+            
+        else:
+            await update.message.reply_text("⚠️ No setup or broadcast is waiting for confirmation.")
+
+# ==========================================
+# 📢 BROADCAST EXECUTION ENGINE
+# ==========================================
+async def execute_broadcast(context: ContextTypes.DEFAULT_TYPE, admin_id: int, state: dict):
+    """Executes the broadcast loop seamlessly with Async Cursors for High Scalability."""
+    btype = state["type"]
+    success, failed = 0, 0
+    
+    # Setup Inline Keyboard
+    inline_buttons = []
+    for btn in state["buttons"]:
+        inline_buttons.append([get_color_btn(btn["name"], url=btn["url"], style=btn["style"])])
         
-        # Save to Database
-        await settings_col.update_one(
-            {"_id": "custom_dm"},
-            {"$set": {"data": state}},
-            upsert=True
-        )
+    kb = InlineKeyboardMarkup(inline_buttons) if inline_buttons else None
+    msg_text = state["text"] if state["text"] else ""
+    
+    # Choose Collection
+    collection = users_col if btype == "users" else chats_col
+    id_key = "user_id" if btype == "users" else "chat_id"
         
-        del setup_state[uid]
-        await update.message.reply_text("🚀 <b>Custom Verification DM Saved Successfully!</b>\n\nAnyone who verifies now will receive this exact message and buttons.", parse_mode=ParseMode.HTML)
+    # Async cursor prevents loading large sets of users in RAM at once.
+    cursor = collection.find({})
+    
+    async for target in cursor:
+        tid = target.get(id_key)
+        if not tid:
+            continue
+            
+        try:
+            if state["media_type"] == "photo":
+                await context.bot.send_photo(chat_id=tid, photo=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+            elif state["media_type"] == "video":
+                await context.bot.send_video(chat_id=tid, video=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+            elif state["media_type"] == "document":
+                await context.bot.send_document(chat_id=tid, document=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+            elif state["media_type"] == "audio":
+                await context.bot.send_audio(chat_id=tid, audio=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+            elif state["media_type"] == "animation":
+                await context.bot.send_animation(chat_id=tid, animation=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+            elif state["media_type"] == "voice":
+                await context.bot.send_voice(chat_id=tid, voice=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+            else:
+                await context.bot.send_message(chat_id=tid, text=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+            
+            success += 1
+            await asyncio.sleep(0.05) # Safe rate limiting delay
+            
+        except telegram.error.RetryAfter as e:
+            logger.warning(f"Broadcast FloodWait for {e.retry_after} seconds.")
+            await asyncio.sleep(e.retry_after)
+            try:
+                if state["media_type"] == "photo":
+                    await context.bot.send_photo(chat_id=tid, photo=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+                elif state["media_type"] == "video":
+                    await context.bot.send_video(chat_id=tid, video=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+                elif state["media_type"] == "document":
+                    await context.bot.send_document(chat_id=tid, document=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+                elif state["media_type"] == "audio":
+                    await context.bot.send_audio(chat_id=tid, audio=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+                elif state["media_type"] == "animation":
+                    await context.bot.send_animation(chat_id=tid, animation=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+                elif state["media_type"] == "voice":
+                    await context.bot.send_voice(chat_id=tid, voice=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+                else:
+                    await context.bot.send_message(chat_id=tid, text=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+                success += 1
+            except:
+                failed += 1
+                
+        except Exception as e:
+            logger.info(f"Broadcast to {tid} failed. Reason: {e}")
+            failed += 1
+                
+    # Final Notification
+    await context.bot.send_message(
+        admin_id, 
+        f"<blockquote>✅ <b>BROADCAST COMPLETED</b></blockquote>\n\n"
+        f"🎯 <b>Successfully Sent:</b> <code>{success}</code>\n"
+        f"🚫 <b>Failed (Blocked/Dead):</b> <code>{failed}</code>\n\n"
+        f"<i>Note: Failed users are NOT deleted from the database. Their data is safe.</i>",
+        parse_mode=ParseMode.HTML
+    )
 
 # ==========================================
 # ⚙️ BOT INITIALIZATION & COMMAND SETUP
@@ -578,24 +734,25 @@ def main():
     app.add_handler(CommandHandler("start", start_command, filters=filters.ChatType.PRIVATE))
     app.add_handler(CommandHandler("help", help_command, filters=filters.ChatType.PRIVATE))
     app.add_handler(CommandHandler("admin", admin_dashboard, filters=filters.ChatType.PRIVATE))
-    app.add_handler(CommandHandler("cancel", cancel_setup, filters=filters.ChatType.PRIVATE))
-    app.add_handler(CommandHandler("confirm", confirm_setup, filters=filters.ChatType.PRIVATE))
+    app.add_handler(CommandHandler("cancel", cancel_handler, filters=filters.ChatType.PRIVATE))
+    app.add_handler(CommandHandler("confirm", confirm_handler, filters=filters.ChatType.PRIVATE))
     app.add_handler(CommandHandler("export_users", export_users_csv, filters=filters.ChatType.PRIVATE))
-    app.add_handler(CommandHandler("skip", process_setup_steps, filters=filters.ChatType.PRIVATE))
+    app.add_handler(CommandHandler("skip", process_wizard_steps, filters=filters.ChatType.PRIVATE))
     
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(ChatJoinRequestHandler(auto_accept_requests))
     
-    # DM Wizard Step Handler
+    # Unified Wizard Step Handler (Handles DM setup & Broadcast inputs)
     app.add_handler(MessageHandler(
         filters.ChatType.PRIVATE & (
             filters.PHOTO | filters.VIDEO | filters.TEXT | filters.Document.ALL | 
             filters.AUDIO | filters.ANIMATION | filters.VOICE
         ) & ~filters.COMMAND, 
-        process_setup_steps
+        process_wizard_steps
     ))
     
     app.run_polling(allowed_updates=["message", "callback_query", "chat_join_request"], drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
+
