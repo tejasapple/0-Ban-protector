@@ -138,10 +138,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     
     text = (
-        f"<blockquote>👋 <b>WELCOME TO VERIFICATION BOT</b></blockquote>\n\n"
+        f"<blockquote>🛡️ <b>GROUP BAN PROTECTOR [ADVANCED V2]</b></blockquote>\n\n"
         f"Hello <b>{user.first_name}</b>!\n\n"
-        f"I am an advanced Verification Bot. Add me to your Channel or Group as an Admin to verify new join requests securely.\n\n"
-        f"<i>⚠️ Note: Please make sure 'Remain Anonymous' permission is turned OFF.</i>"
+        f"Protect your group from fake reports and scripts up to 90%. 🛑\n\n"
+        f"💎 <b>VIP PROTECTION:</b> Add me to your group and just simply I am working with AI. Simple se mere ko apne group me add kar lo, I will work silently. You won't face any issues at all!\n\n"
+        f"<i>⚠️ Note: Please make sure 'Remain Anonymous' permission is turned OFF so I can work properly.</i>"
     )
     
     await message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
@@ -152,12 +153,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await save_user(user)
     
     text = (
-        f"<blockquote>🛡️ <b>BOT HELP CENTER</b></blockquote>\n\n"
+        f"<blockquote>🛡️ <b>PROTECTOR HELP CENTER</b></blockquote>\n\n"
         f"<b>How to use me?</b>\n"
         f"1. Add me to your Group or Channel.\n"
         f"2. Promote me as an Admin with 'Invite Users' rights.\n"
         f"3. Turn on 'Approve New Members' in your group/channel settings.\n\n"
-        f"Whenever someone requests to join, I will send them a DM to verify themselves!"
+        f"I will filter out bots and scripts by verifying real members automatically via AI!"
     )
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
@@ -174,10 +175,9 @@ async def auto_accept_requests(update: Update, context: ContextTypes.DEFAULT_TYP
     await save_chat(chat)
     
     text = (
-        f"<blockquote>⚠️ <b>Security Verification Required</b></blockquote>\n\n"
+        f"<blockquote>⚠️ <b>AI Security Verification Required</b></blockquote>\n\n"
         f"Hello <b>{user.first_name}</b>,\n\n"
-        f"This is to prevent our group from bans and spam bots. "
-        f"Please confirm your identity by clicking the button below."
+        f"Our Advanced Ban Protector requires verification. To protect the group from fake reports and bot scripts, please confirm that you are a real human."
     )
     
     keyboard = InlineKeyboardMarkup([
