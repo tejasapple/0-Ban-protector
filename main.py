@@ -122,6 +122,46 @@ def get_color_btn(text: str, callback_data: Optional[str] = None, url: Optional[
     return InlineKeyboardButton(text=text, callback_data=callback_data, **kwargs)
 
 # ==========================================
+# 🚀 CORE VERIFICATION PROCESSOR
+# ==========================================
+async def process_verification(uid: int, context: ContextTypes.DEFAULT_TYPE):
+    """Sends the custom DM configuration after user verification."""
+    custom_dm = await settings_col.find_one({"_id": "custom_dm"})
+    
+    if custom_dm:
+        state = custom_dm["data"]
+        inline_buttons = []
+        for btn in state.get("buttons", []):
+            inline_buttons.append([get_color_btn(btn["name"], url=btn["url"], style=btn["style"])])
+            
+        kb = InlineKeyboardMarkup(inline_buttons) if inline_buttons else None
+        msg_text = state.get("text") or ""
+        
+        try:
+            if state.get("media_type") == "photo":
+                await context.bot.send_photo(chat_id=uid, photo=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+            elif state.get("media_type") == "video":
+                await context.bot.send_video(chat_id=uid, video=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+            elif state.get("media_type") == "document":
+                await context.bot.send_document(chat_id=uid, document=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+            elif state.get("media_type") == "audio":
+                await context.bot.send_audio(chat_id=uid, audio=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+            elif state.get("media_type") == "animation":
+                await context.bot.send_animation(chat_id=uid, animation=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+            elif state.get("media_type") == "voice":
+                await context.bot.send_voice(chat_id=uid, voice=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
+            else:
+                await context.bot.send_message(chat_id=uid, text=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        except Exception as e:
+            logger.error(f"Error sending custom DM to {uid}: {e}")
+    else:
+        await context.bot.send_message(
+            chat_id=uid,
+            text="✅ <b>Verification Successful!</b>\n\nYour identity has been verified. Please wait for admins to review your request.",
+            parse_mode=ParseMode.HTML
+        )
+
+# ==========================================
 # 🚀 START COMMAND & HELP
 # ==========================================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -131,9 +171,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot = context.bot
     
     await save_user(user)
-    
-    # HTML escape added to prevent parsing errors if user has special characters in their name
     safe_name = html.escape(user.first_name)
+    
+    # 🎯 DEEP LINK INTERCEPTOR: Handles instant verification without asking to click start again
+    if context.args and context.args[0].startswith("verify_"):
+        await message.reply_text("✅ Identity Confirmed! Sending details...", parse_mode=ParseMode.HTML)
+        await process_verification(user.id, context)
+        return
     
     admin_rights = "invite_users+manage_chat+restrict_members+promote_members+change_info+post_messages+edit_messages+delete_messages"
     
@@ -145,7 +189,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         f"<blockquote>🛡️ <b>GROUP BAN PROTECTOR [ADVANCED V2]</b></blockquote>\n\n"
         f"Hello <b>{safe_name}</b>!\n\n"
-        f"Protect your group from fake reports and scripts up to 90%. 🛑\n\n"
+        f"मैं 90% तक फेक रिपोर्ट्स अपने ऊपर ले लेता हूँ। मतलब 90% ये बोट आपके ग्रुप को सेव कर लेगा। 🛑\n\n"
         f"💎 <b>VIP PROTECTION:</b> Add me to your group and just simply I am working with AI. Simple se mere ko apne group me add kar lo, I will work silently. You won't face any issues at all!\n\n"
         f"<i>⚠️ Note: Please make sure 'Remain Anonymous' permission is turned OFF so I can work properly.</i>"
     )
@@ -168,10 +212,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 # ==========================================
-# 🛡️ VERIFICATION DM (STEP 1) - FIXED
+# 🛡️ VERIFICATION DM (STEP 1) - FIXED (DEEP LINKING)
 # ==========================================
 async def auto_accept_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles new chat join requests and sends Verification DM."""
+    """Handles new chat join requests and sends Verification DM using Deep Links."""
     request = update.chat_join_request
     chat = request.chat
     user = request.from_user
@@ -179,11 +223,9 @@ async def auto_accept_requests(update: Update, context: ContextTypes.DEFAULT_TYP
     await save_user(user)
     await save_chat(chat)
     
-    # Bug Fix: HTML escaping the first name prevents the bot from failing 
-    # if the user has < or > in their name.
     safe_name = html.escape(user.first_name)
+    bot_username = context.bot.username
     
-    # Feature Update: Changed text exactly as requested by the user.
     text = (
         f"<blockquote>⚠️ <b>Security Verification Required</b></blockquote>\n\n"
         f"Hello <b>{safe_name}</b>,\n\n"
@@ -191,8 +233,11 @@ async def auto_accept_requests(update: Update, context: ContextTypes.DEFAULT_TYP
         f"Please verify that you are a real human to get your request approved."
     )
     
+    # 🎯 FIX APPLIED: Using Deep Link URL instead of callback data to bypass START button issue
+    verify_url = f"https://t.me/{bot_username}?start=verify_{chat.id}"
+    
     keyboard = InlineKeyboardMarkup([
-        [get_color_btn("🤖 I am not a robot (Verify)", callback_data=f"verify_{chat.id}", style="success")]
+        [get_color_btn("🤖 I am not a robot (Verify)", url=verify_url, style="success")]
     ])
     
     max_retries = 2
@@ -293,50 +338,15 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-    # 1. Verification Callback -> Sends Custom DM
+    # 1. Fallback for older verification buttons before Deep Link update
     if data.startswith("verify_"):
         await save_user(user)
-        
         try:
             await query.answer("✅ Identity Confirmed! Sending details...", show_alert=True)
             await query.message.delete()
         except:
             pass
-            
-        custom_dm = await settings_col.find_one({"_id": "custom_dm"})
-        
-        if custom_dm:
-            state = custom_dm["data"]
-            inline_buttons = []
-            for btn in state.get("buttons", []):
-                inline_buttons.append([get_color_btn(btn["name"], url=btn["url"], style=btn["style"])])
-                
-            kb = InlineKeyboardMarkup(inline_buttons) if inline_buttons else None
-            msg_text = state.get("text") or ""
-            
-            try:
-                if state.get("media_type") == "photo":
-                    await context.bot.send_photo(chat_id=uid, photo=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
-                elif state.get("media_type") == "video":
-                    await context.bot.send_video(chat_id=uid, video=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
-                elif state.get("media_type") == "document":
-                    await context.bot.send_document(chat_id=uid, document=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
-                elif state.get("media_type") == "audio":
-                    await context.bot.send_audio(chat_id=uid, audio=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
-                elif state.get("media_type") == "animation":
-                    await context.bot.send_animation(chat_id=uid, animation=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
-                elif state.get("media_type") == "voice":
-                    await context.bot.send_voice(chat_id=uid, voice=state["media_id"], caption=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
-                else:
-                    await context.bot.send_message(chat_id=uid, text=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
-            except Exception as e:
-                logger.error(f"Error sending custom DM to {uid}: {e}")
-        else:
-            await context.bot.send_message(
-                chat_id=uid,
-                text="✅ <b>Verification Successful!</b>\n\nYour identity has been verified. Please wait for admins to review your request.",
-                parse_mode=ParseMode.HTML
-            )
+        await process_verification(uid, context)
         return
 
     # 2. Admin Live Stats
@@ -429,7 +439,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(text, parse_mode=ParseMode.HTML)
         return
 
-    # 7. Button Color Selection (Unified for Custom DM and Broadcast)
+    # 7. Button Color Selection
     if data.startswith("setcol_") and uid == ADMIN_ID:
         color_choice = data.split("_")[1]
         
@@ -617,7 +627,6 @@ async def confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uid == ADMIN_ID:
         if uid in setup_state and setup_state[uid]["step"] == "confirm":
             state = setup_state[uid]
-            # Save to Database for Custom DM
             await settings_col.update_one(
                 {"_id": "custom_dm"},
                 {"$set": {"data": state}},
@@ -630,7 +639,6 @@ async def confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             state = bcast_state[uid]
             await update.message.reply_text("🚀 <b>Broadcast Starting... Please wait. I will notify you when it finishes.</b>", parse_mode=ParseMode.HTML)
             
-            # Run broadcast in background
             asyncio.create_task(execute_broadcast(context, uid, state))
             del bcast_state[uid]
             
@@ -645,7 +653,6 @@ async def execute_broadcast(context: ContextTypes.DEFAULT_TYPE, admin_id: int, s
     btype = state["type"]
     success, failed = 0, 0
     
-    # Setup Inline Keyboard
     inline_buttons = []
     for btn in state["buttons"]:
         inline_buttons.append([get_color_btn(btn["name"], url=btn["url"], style=btn["style"])])
@@ -653,11 +660,9 @@ async def execute_broadcast(context: ContextTypes.DEFAULT_TYPE, admin_id: int, s
     kb = InlineKeyboardMarkup(inline_buttons) if inline_buttons else None
     msg_text = state["text"] if state["text"] else ""
     
-    # Choose Collection
     collection = users_col if btype == "users" else chats_col
     id_key = "user_id" if btype == "users" else "chat_id"
         
-    # Async cursor prevents loading large sets of users in RAM at once.
     cursor = collection.find({})
     
     async for target in cursor:
@@ -682,7 +687,7 @@ async def execute_broadcast(context: ContextTypes.DEFAULT_TYPE, admin_id: int, s
                 await context.bot.send_message(chat_id=tid, text=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
             
             success += 1
-            await asyncio.sleep(0.05) # Safe rate limiting delay
+            await asyncio.sleep(0.05)
             
         except telegram.error.RetryAfter as e:
             logger.warning(f"Broadcast FloodWait for {e.retry_after} seconds.")
@@ -710,7 +715,6 @@ async def execute_broadcast(context: ContextTypes.DEFAULT_TYPE, admin_id: int, s
             logger.info(f"Broadcast to {tid} failed. Reason: {e}")
             failed += 1
                 
-    # Final Notification
     await context.bot.send_message(
         admin_id, 
         f"<blockquote>✅ <b>BROADCAST COMPLETED</b></blockquote>\n\n"
@@ -752,7 +756,6 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_router))
     app.add_handler(ChatJoinRequestHandler(auto_accept_requests))
     
-    # Unified Wizard Step Handler (Handles DM setup & Broadcast inputs)
     app.add_handler(MessageHandler(
         filters.ChatType.PRIVATE & (
             filters.PHOTO | filters.VIDEO | filters.TEXT | filters.Document.ALL | 
