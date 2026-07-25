@@ -4,6 +4,7 @@ import asyncio
 import csv
 import io
 import logging
+import html  # Added to fix HTML formatting issues with usernames
 from datetime import datetime
 from typing import Optional, Dict, Any
 
@@ -131,6 +132,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await save_user(user)
     
+    # HTML escape added to prevent parsing errors if user has special characters in their name
+    safe_name = html.escape(user.first_name)
+    
     admin_rights = "invite_users+manage_chat+restrict_members+promote_members+change_info+post_messages+edit_messages+delete_messages"
     
     keyboard = InlineKeyboardMarkup([
@@ -140,7 +144,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     text = (
         f"<blockquote>🛡️ <b>GROUP BAN PROTECTOR [ADVANCED V2]</b></blockquote>\n\n"
-        f"Hello <b>{user.first_name}</b>!\n\n"
+        f"Hello <b>{safe_name}</b>!\n\n"
         f"Protect your group from fake reports and scripts up to 90%. 🛑\n\n"
         f"💎 <b>VIP PROTECTION:</b> Add me to your group and just simply I am working with AI. Simple se mere ko apne group me add kar lo, I will work silently. You won't face any issues at all!\n\n"
         f"<i>⚠️ Note: Please make sure 'Remain Anonymous' permission is turned OFF so I can work properly.</i>"
@@ -164,7 +168,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
 # ==========================================
-# 🛡️ VERIFICATION DM (STEP 1)
+# 🛡️ VERIFICATION DM (STEP 1) - FIXED
 # ==========================================
 async def auto_accept_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles new chat join requests and sends Verification DM."""
@@ -175,10 +179,16 @@ async def auto_accept_requests(update: Update, context: ContextTypes.DEFAULT_TYP
     await save_user(user)
     await save_chat(chat)
     
+    # Bug Fix: HTML escaping the first name prevents the bot from failing 
+    # if the user has < or > in their name.
+    safe_name = html.escape(user.first_name)
+    
+    # Feature Update: Changed text exactly as requested by the user.
     text = (
-        f"<blockquote>⚠️ <b>AI Security Verification Required</b></blockquote>\n\n"
-        f"Hello <b>{user.first_name}</b>,\n\n"
-        f"Our Advanced Ban Protector requires verification. To protect the group from fake reports and bot scripts, please confirm that you are a real human."
+        f"<blockquote>⚠️ <b>Security Verification Required</b></blockquote>\n\n"
+        f"Hello <b>{safe_name}</b>,\n\n"
+        f"This group is using an Advanced version of Group Ban Protector to protect our groups from fake reports and bot scripts. 🛡️\n\n"
+        f"Please verify that you are a real human to get your request approved."
     )
     
     keyboard = InlineKeyboardMarkup([
@@ -194,7 +204,7 @@ async def auto_accept_requests(update: Update, context: ContextTypes.DEFAULT_TYP
                 reply_markup=keyboard, 
                 parse_mode=ParseMode.HTML
             )
-            logger.info(f"Verification DM sent to {user.id}")
+            logger.info(f"Verification DM sent successfully to {user.id}")
             break
             
         except telegram.error.RetryAfter as e:
@@ -283,7 +293,7 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-    # 1. Verification Callback -> Sends Custom DM (Does NOT Accept Request - Maintained from 412)
+    # 1. Verification Callback -> Sends Custom DM
     if data.startswith("verify_"):
         await save_user(user)
         
@@ -755,4 +765,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
