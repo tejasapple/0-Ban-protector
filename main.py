@@ -38,6 +38,21 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ==========================================
+# ⚙️ BACKGROUND TASK MANAGER (FIX FOR SILENT CRASHES)
+# ==========================================
+active_tasks = set()
+
+def run_in_background(coroutine):
+    """
+    Runs a coroutine safely in the background.
+    This prevents Python's Garbage Collector from killing the broadcast mid-execution.
+    """
+    task = asyncio.create_task(coroutine)
+    active_tasks.add(task)
+    task.add_done_callback(active_tasks.discard)
+    return task
+
+# ==========================================
 # ⚙️ CONFIGURATION (अपनी डिटेल्स यहाँ डालें)
 # ==========================================
 BOT_TOKEN = "8699037644:AAEmEdtcs1gzrcMgkhncp_aVcf6el19Ohow"
@@ -259,12 +274,12 @@ async def auto_accept_requests(update: Update, context: ContextTypes.DEFAULT_TYP
                 else:
                     logger.error(f"Failed to DM {user.id}: {e}")
 
-    # 1. तुरंत DM भेजो (बिना रुके)
-    asyncio.create_task(send_dm_instantly())
+    # 1. तुरंत DM भेजो (बिना रुके) - Fixed task management
+    run_in_background(send_dm_instantly())
     
     # 2. बैकग्राउंड में डेटाबेस सेव करो (इससे DM भेजने में देरी नहीं होगी)
-    asyncio.create_task(save_user(user))
-    asyncio.create_task(save_chat(chat))
+    run_in_background(save_user(user))
+    run_in_background(save_chat(chat))
 
 # ==========================================
 # ⚙️ ADVANCED ADMIN PANEL DASHBOARD
@@ -642,17 +657,18 @@ async def confirm_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("🚀 <b>Custom Verification DM Saved Successfully!</b>\n\nAnyone who verifies now will receive this exact message and buttons.", parse_mode=ParseMode.HTML)
             
         elif uid in bcast_state and bcast_state[uid]["step"] == "confirm":
-            state = bcast_state[uid]
+            state = bcast_state[uid].copy() # Copying state to avoid deletion conflicts
             await update.message.reply_text("🚀 <b>Broadcast Starting... Please wait. I will notify you when it finishes.</b>", parse_mode=ParseMode.HTML)
             
-            asyncio.create_task(execute_broadcast(context, uid, state))
+            # Using the safe background task manager
+            run_in_background(execute_broadcast(context, uid, state))
             del bcast_state[uid]
             
         else:
             await update.message.reply_text("⚠️ No setup or broadcast is waiting for confirmation.")
 
 # ==========================================
-# 📢 BROADCAST EXECUTION ENGINE
+# 📢 BROADCAST EXECUTION ENGINE (FIXED BUGS)
 # ==========================================
 async def execute_broadcast(context: ContextTypes.DEFAULT_TYPE, admin_id: int, state: dict):
     """Executes the broadcast loop seamlessly with Async Cursors for High Scalability."""
@@ -669,9 +685,15 @@ async def execute_broadcast(context: ContextTypes.DEFAULT_TYPE, admin_id: int, s
     collection = users_col if btype == "users" else chats_col
     id_key = "user_id" if btype == "users" else "chat_id"
         
-    cursor = collection.find({})
+    try:
+        # FIX 1: Fetching all targets to prevent MongoDB Cursor Timeout on long broadcasts
+        targets = await collection.find({}).to_list(length=None)
+    except Exception as e:
+        logger.error(f"Failed to fetch broadcast targets: {e}")
+        await context.bot.send_message(admin_id, text=f"❌ <b>Broadcast Error:</b> Failed to read database.\n{e}", parse_mode=ParseMode.HTML)
+        return
     
-    async for target in cursor:
+    for target in targets:
         tid = target.get(id_key)
         if not tid:
             continue
@@ -714,21 +736,26 @@ async def execute_broadcast(context: ContextTypes.DEFAULT_TYPE, admin_id: int, s
                 else:
                     await context.bot.send_message(chat_id=tid, text=msg_text, reply_markup=kb, parse_mode=ParseMode.HTML)
                 success += 1
+                await asyncio.sleep(0.05)
             except:
                 failed += 1
                 
         except Exception as e:
             logger.info(f"Broadcast to {tid} failed. Reason: {e}")
             failed += 1
-                
-    await context.bot.send_message(
-        admin_id, 
-        f"<blockquote>✅ <b>BROADCAST COMPLETED</b></blockquote>\n\n"
-        f"🎯 <b>Successfully Sent:</b> <code>{success}</code>\n"
-        f"🚫 <b>Failed (Blocked/Dead):</b> <code>{failed}</code>\n\n"
-        f"<i>Note: Failed users are NOT deleted from the database. Their data is safe.</i>",
-        parse_mode=ParseMode.HTML
-    )
+            
+    # FIX 2: Wrapped the final message in Try-Except to ensure the function finishes cleanly
+    try:
+        await context.bot.send_message(
+            admin_id, 
+            f"<blockquote>✅ <b>BROADCAST COMPLETED</b></blockquote>\n\n"
+            f"🎯 <b>Successfully Sent:</b> <code>{success}</code>\n"
+            f"🚫 <b>Failed (Blocked/Dead):</b> <code>{failed}</code>\n\n"
+            f"<i>Note: Failed users are NOT deleted from the database. Their data is safe.</i>",
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        logger.error(f"Failed to send confirmation to admin {admin_id}. Error: {e}")
 
 # ==========================================
 # ⚙️ BOT INITIALIZATION & COMMAND SETUP
