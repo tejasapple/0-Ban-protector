@@ -55,9 +55,9 @@ def run_in_background(coroutine):
 # ==========================================
 # ⚙️ CONFIGURATION (अपनी डिटेल्स यहाँ डालें)
 # ==========================================
-BOT_TOKEN = "8699037644:AAEmEdtcs1gzrcMgkhncp_aVcf6el19Ohow"
+BOT_TOKEN = "8856382465:AAGgt2q2Uq659B6wWYp3-xE0Q2_jZjWQJF4"
 MONGO_DB_URI = "mongodb+srv://Tejas7xx:mrxtejas7@cluster0.akhlgjf.mongodb.net/?appName=Cluster0" 
-ADMIN_ID = 8884734704  
+ADMIN_ID = 7121137252  
 
 # ==========================================
 # 🗄️ DATABASE SETUP (MongoDB)
